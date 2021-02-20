@@ -1,0 +1,21 @@
+[package]
+name = "rlbox_wasmtime_sandbox"
+version = "0.1.0"
+authors = ["shravanrn@gmail.com <shravanrn@gmail.com>"]
+edition = "2018"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.19"
+# wasmtime = { git = "https://github.com/PLSysSec/wasmtime_sandbox_compiler", rev="", package = "wasmtime" }
+wasmtime = { path = "../wasmtime_sandbox_compiler/crates/wasmtime" }
+wasmtime-runtime = { path = "../wasmtime_sandbox_compiler/crates/runtime"}
+wasmtime-wasi = { path = "../wasmtime_sandbox_compiler/crates/wasi" }
+wasi-common = { path = "../wasmtime_sandbox_compiler/crates/wasi-common" }
+wasi-cap-std-sync = { path = "../wasmtime_sandbox_compiler/crates/wasi-common/cap-std-sync" }
+wiggle = { path = "../wasmtime_sandbox_compiler/crates/wiggle", default-features = false }
+
+
+[lib]
+name = "rlbox_wasmtime_sandbox"
+crate-type = ["rlib", "staticlib"]

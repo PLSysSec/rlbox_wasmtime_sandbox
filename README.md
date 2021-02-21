@@ -1,12 +1,12 @@
-[![Build Status](https://travis-ci.com/PLSysSec/rlbox_lucet_sandbox.svg?branch=master)](https://travis-ci.com/PLSysSec/rlbox_lucet_sandbox)
+[![Build Status](https://travis-ci.com/PLSysSec/rlbox_wasmtime_sandbox.svg?branch=master)](https://travis-ci.com/PLSysSec/rlbox_wasmtime_sandbox)
 
-# RLBOX Lucet Sandbox Integration
-Integration with RLBox sandboxing API to leverage the sandboxing in WASM modules compiled with lucet compiler.
+# RLBOX Wasmtime Sandbox Integration
+Integration with RLBox sandboxing API to leverage the sandboxing in WASM modules compiled with wasmtime compiler.
 
 For details about the RLBox sandboxing APIs, see [here](https://github.com/PLSysSec/rlbox_api_cpp17).
 
 This code has been tested on 64-bit versions of Ubuntu and Mac OSX.
-The lucet compiler does not currently support Windows.
+The wasmtime compiler does not currently support Windows.
 
 ## Reporting security bugs
 
@@ -26,7 +26,7 @@ On Arch Linux you'll need to install [ncurses5-compat-libs](https://aur.archlinu
 
 ## Using this library
 
-First, build the rlbox_lucet_sandbox repo with
+First, build the rlbox_wasmtime_sandbox repo with
 
 ```bash
 cmake -S . -B ./build
@@ -34,36 +34,36 @@ cmake --build ./build --target all
 ```
 (Note: The parallel build is currently broken for first build. Incremental parallel build works fine.)
 
-This lucet/wasm integration with RLBox depends on 3 external tools/libraries that are pulled in **automatically** to run the tests included in this repo.
+This wasmtime/wasm integration with RLBox depends on 3 external tools/libraries that are pulled in **automatically** to run the tests included in this repo.
 
 1. [A clang compiler with support for WASM/WASI backend, and the WASI sysroot](https://github.com/CraneStation/wasi-sdk). This allows you to compile C/C++ code to WASM modules usable outside of web browsers (in desktop applications).
-2. [The **modified** lucet compiler](https://github.com/shravanrn/lucet/) that compiles the produced WASM/WASI module to a native binary.
+2. [The **modified** wasmtime compiler](https://github.com/shravanrn/wasmtime/) that compiles the produced WASM/WASI module to a native binary.
 3.  [The RLBox APIs]((https://github.com/PLSysSec/rlbox_api_cpp17)) - A set of APIs that allow easy use of sandboxed libraries.
 
 In the below steps, you can either use the automatically pulled in versions as described below, or download the tools yourself.
 
 In order to sandbox a library of your choice.
 
-- Build the sources of your library along with the file `c_src/lucet_sandbox_wrapper.c` and passing the flag `--export-all` to the linker using the clang compiler described above. This will produce a wasm module. The required clang compiler is available in the path `build/_deps/wasiclang-src/opt/wasi-sdk/bin/clang`.
+- Build the sources of your library along with the file `c_src/wasmtime_sandbox_wrapper.c` and passing the flag `--export-all` to the linker using the clang compiler described above. This will produce a wasm module. The required clang compiler is available in the path `build/_deps/wasiclang-src/opt/wasi-sdk/bin/clang`.
 For instance, to edit an existing `make` based build system, you can run the commmand.
 
 ```bash
-build/_deps/wasiclang-src/opt/wasi-sdk/bin/clang --sysroot build/_deps/wasiclang-src/opt/wasi-sdk/share/wasi-sysroot/ c_src/lucet_sandbox_wrapper.c -c -o c_src/lucet_sandbox_wrapper.o
+build/_deps/wasiclang-src/opt/wasi-sdk/bin/clang --sysroot build/_deps/wasiclang-src/opt/wasi-sdk/share/wasi-sysroot/ c_src/wasmtime_sandbox_wrapper.c -c -o c_src/wasmtime_sandbox_wrapper.o
 
 CC=build/_deps/wasiclang-src/opt/wasi-sdk/bin/clang                            \
 CXX=build/_deps/wasiclang-src/opt/wasi-sdk/bin/clang++                         \
 CFLAGS="--sysroot build/_deps/wasiclang-src/opt/wasi-sdk/share/wasi-sysroot/"  \
 LD=build/_deps/wasiclang-src/opt/wasi-sdk/bin/wasm-ld                          \
-LDLIBS=lucet_sandbox_wrapper.o                                                 \
+LDLIBS=wasmtime_sandbox_wrapper.o                                                 \
 LDFLAGS=-Wl,--export-all                                                       \
 make
 ```
 
-- Assuming the above command produced the wasm module `libFoo`, compile this to an ELF shared library using the modified lucetc compiler as shown below.
+- Assuming the above command produced the wasm module `libFoo`, compile this to an ELF shared library using the modified wasmtimec compiler as shown below.
 
 ```bash
-build/cargo/release/lucetc                                        \
-    --bindings build/_deps/mod_lucet-src/lucet-wasi/bindings.json \
+build/cargo/release/wasmtimec                                        \
+    --bindings build/_deps/mod_wasmtime-src/wasmtime-wasi/bindings.json \
     --guard-size "4GiB"                                           \
     --min-reserved-size "4GiB"                                    \
     --max-reserved-size "4GiB"                                    \
@@ -79,7 +79,7 @@ build/cargo/release/lucetc                                        \
 
 int main()
 {
-    rlbox_sandbox<rlbox_lucet_sandbox> sandbox;
+    rlbox_sandbox<rlbox_wasmtime_sandbox> sandbox;
     sandbox.create_sandbox("libWasmFoo.so");
     // Invoke function bar with parameter 1
     sandbox.invoke_sandbox_function(bar, 1);
@@ -88,10 +88,10 @@ int main()
 }
 ```
 
-- To compile the above example, you must include the rlbox header files in `build/_deps/rlbox-src/code/include`, the integration header files in `include/` and the lucet_sandbox library in `build/cargo/{debug or release}/librlbox_lucet_sandbox.a` (make sure to use the whole archive and the rdynamic linker options). For instance, you can compile the above with
+- To compile the above example, you must include the rlbox header files in `build/_deps/rlbox-src/code/include`, the integration header files in `include/` and the wasmtime_sandbox library in `build/cargo/{debug or release}/librlbox_wasmtime_sandbox.a` (make sure to use the whole archive and the rdynamic linker options). For instance, you can compile the above with
 
 ```bash
-g++ -std=c++17 example.cpp -o example -I build/_deps/rlbox-src/code/include -I include -Wl,--whole-archive -l:build/cargo/debug/librlbox_lucet_sandbox.a -Wl,--no-whole-archive -Wl,-rdynamic
+g++ -std=c++17 example.cpp -o example -I build/_deps/rlbox-src/code/include -I include -Wl,--whole-archive -l:build/cargo/debug/librlbox_wasmtime_sandbox.a -Wl,--no-whole-archive -Wl,-rdynamic
 ```
 
 ## Contributing Code

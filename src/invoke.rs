@@ -8,8 +8,8 @@ use std::os::raw::{c_char, c_int};
 
 #[no_mangle]
 pub extern "C" fn wasmtime_lookup_function(
-    inst_ptr: *mut c_void,
-    fn_name: *const c_char,
+    _inst_ptr: *mut c_void,
+    _fn_name: *const c_char,
 ) -> *mut c_void {
     panic!("Not implemented");
     // let inst = unsafe { &mut *(inst_ptr as *mut WasmtimeSandboxInstance) };
@@ -24,49 +24,10 @@ pub extern "C" fn wasmtime_lookup_function(
 }
 
 #[no_mangle]
-pub extern "C" fn wasmtime_set_curr_instance(inst_ptr: *mut c_void)
+pub extern "C" fn wasmtime_set_curr_instance(_inst_ptr: *mut c_void)
 {
     // let inst = unsafe { &mut *(inst_ptr as *mut WasmtimeSandboxInstance) };
     // inst.instance_handle.set_current_instance();
-}
-
-pub extern "C" fn wasmtime_run_function_return_void1(
-    inst_ptr: *mut c_void,
-    func_ptr: *mut c_void,
-    argc: c_int,
-    argv: *mut WasmtimeValue,
-) {
-    let inst = unsafe { &mut *(inst_ptr as *mut WasmtimeSandboxInstance) };
-    let func_charp : *const c_char = func_ptr as *const c_char;
-    let func = unsafe {
-        CStr::from_ptr(func_charp)
-            .to_string_lossy()
-            .into_owned()
-    };
-    let ext = inst.linker.get_one_by_name("", Some(&func)).unwrap();
-
-    let f = match &ext {
-        Extern::Func(f) => {
-            f
-        }
-        _ => {
-            panic!("Not a function")
-        },
-    };
-    if argc != f.param_arity().try_into().unwrap() {
-        panic!("Wrong number of arguments");
-    }
-
-    let args = if argc == 0 {
-        vec![]
-    } else {
-        unsafe { std::slice::from_raw_parts(argv, argc as usize) }
-            .into_iter()
-            .map(|v| v.into())
-            .collect()
-    };
-
-    let ret = f.call(&args).unwrap();
 }
 
 #[no_mangle]
@@ -136,16 +97,7 @@ fn wasmtime_run_function_helper(
             .to_string_lossy()
             .into_owned()
     };
-    let ext = inst.linker.get_one_by_name("", Some(&func)).unwrap();
-
-    let f = match &ext {
-        Extern::Func(f) => {
-            f
-        }
-        _ => {
-            panic!("Not a function")
-        },
-    };
+    let f = inst.instance.get_func(&func).unwrap();
     if argc != f.param_arity().try_into().unwrap() {
         panic!("Wrong number of arguments");
     }

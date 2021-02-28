@@ -6,7 +6,6 @@ use wasmtime_wasi::Wasi;
 
 use std::convert::TryFrom;
 use std::ffi::c_void;
-use std::sync::Arc;
 
 pub struct WasmtimeSandboxInstance {
     pub instance: Instance,
@@ -62,30 +61,26 @@ pub enum WasmtimeValueType {
     Void,
 }
 
-// impl From<Option<ValueType>> for WasmtimeValueType {
-//     fn from(value_type: Option<ValueType>) -> Self {
-//         match value_type {
-//             Some(value_type_val) => match value_type_val {
-//                 ValueType::I32 => WasmtimeValueType::I32,
-//                 ValueType::I64 => WasmtimeValueType::I64,
-//                 ValueType::F32 => WasmtimeValueType::F32,
-//                 ValueType::F64 => WasmtimeValueType::F64,
-//             },
-//             _ => WasmtimeValueType::Void,
-//         }
-//     }
-// }
+impl From<Option<ValType>> for WasmtimeValueType {
+    fn from(value_type: Option<ValType>) -> Self {
+        match value_type {
+            Some(value_type_val) => match value_type_val {
+                ValType::I32 => WasmtimeValueType::I32,
+                ValType::I64 => WasmtimeValueType::I64,
+                ValType::F32 => WasmtimeValueType::F32,
+                ValType::F64 => WasmtimeValueType::F64,
+                _ => panic!("Unexpected!"),
+            },
+            _ => WasmtimeValueType::Void,
+        }
+    }
+}
 
-// impl From<ValueType> for WasmtimeValueType {
-//     fn from(value_type: ValueType) -> Self {
-//         match value_type {
-//             ValueType::I32 => WasmtimeValueType::I32,
-//             ValueType::I64 => WasmtimeValueType::I64,
-//             ValueType::F32 => WasmtimeValueType::F32,
-//             ValueType::F64 => WasmtimeValueType::F64,
-//         }
-//     }
-// }
+impl From<ValType> for WasmtimeValueType {
+    fn from(value_type: ValType) -> Self {
+        Some(value_type).into()
+    }
+}
 
 // impl Into<Option<ValueType>> for WasmtimeValueType {
 //     fn into(self) -> Option<ValueType> {
@@ -99,17 +94,17 @@ pub enum WasmtimeValueType {
 //     }
 // }
 
-// impl Into<ValueType> for WasmtimeValueType {
-//     fn into(self) -> ValueType {
-//         match self {
-//             WasmtimeValueType::I32 => ValueType::I32,
-//             WasmtimeValueType::I64 => ValueType::I64,
-//             WasmtimeValueType::F32 => ValueType::F32,
-//             WasmtimeValueType::F64 => ValueType::F64,
-//             _ => panic!("Unexpected!"),
-//         }
-//     }
-// }
+impl Into<ValType> for WasmtimeValueType {
+    fn into(self) -> ValType {
+        match self {
+            WasmtimeValueType::I32 => ValType::I32,
+            WasmtimeValueType::I64 => ValType::I64,
+            WasmtimeValueType::F32 => ValType::F32,
+            WasmtimeValueType::F64 => ValType::F64,
+            _ => panic!("Unexpected!"),
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -141,6 +136,18 @@ impl From<&WasmtimeValue> for Val {
     }
 }
 
+impl Into<WasmtimeValue> for Val {
+    fn into(self) -> WasmtimeValue {
+        match self {
+            Val::I32(i) => WasmtimeValue { val_type: self.ty().into(), val: WasmtimeValueUnion { as_i32 :  i } },
+            Val::I64(i) => WasmtimeValue { val_type: self.ty().into(), val: WasmtimeValueUnion { as_i64 :  i } },
+            Val::F32(_) => WasmtimeValue { val_type: self.ty().into(), val: WasmtimeValueUnion { as_f32 :  self.unwrap_f32() } },
+            Val::F64(_) => WasmtimeValue { val_type: self.ty().into(), val: WasmtimeValueUnion { as_f64 :  self.unwrap_f64() } },
+            _ => panic!("Unexpected!"),
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct WasmtimeFunctionSignature {
@@ -149,18 +156,17 @@ pub struct WasmtimeFunctionSignature {
     parameters: *mut WasmtimeValueType,
 }
 
-// impl Into<Signature> for WasmtimeFunctionSignature {
-//     fn into(self) -> Signature {
-//         let len = usize::try_from(self.parameter_cnt).unwrap();
-//         let vec = unsafe { Vec::from_raw_parts(self.parameters, len, len) };
-//         let p: Vec<ValueType> = vec.iter().map(|x| x.clone().into()).collect();
-//         std::mem::forget(vec);
-//         Signature {
-//             params: p,
-//             ret_ty: self.ret.into(),
-//         }
-//     }
-// }
+impl Into<FuncType> for WasmtimeFunctionSignature {
+    fn into(self) -> FuncType {
+        let len = usize::try_from(self.parameter_cnt).unwrap();
+        let vec = unsafe { Vec::from_raw_parts(self.parameters, len, len) };
+        let p: Vec<ValType> = vec.iter().map(|x| x.clone().into()).collect();
+        std::mem::forget(vec);
+        let r: Vec<ValType>  = [ self.ret.into() ].to_vec();
+        let f = FuncType::new(p, r);
+        return f;
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

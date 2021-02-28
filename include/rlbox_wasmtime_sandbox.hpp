@@ -251,32 +251,6 @@ private:
   void* callbacks[MAX_CALLBACKS]{ 0 };
   uint32_t callback_slot_assignment[MAX_CALLBACKS]{ 0 };
 
-  using TableElementRef = WasmtimeFunctionTableElement*;
-  struct FunctionTable
-  {
-    TableElementRef elements[MAX_CALLBACKS];
-    uint32_t slot_number[MAX_CALLBACKS];
-  };
-  inline static std::mutex callback_table_mutex;
-  // We need to share the callback slot info across multiple sandbox instances
-  // that may load the same sandboxed library. Thus if the sandboxed library is
-  // already in the memory space, we should just use the previously saved info
-  // as the load is destroys the callback info. Once all instances of the
-  // library is unloaded, the sandboxed library is removed from the address
-  // space and thus we can "reset" our state. The semantics of shared and weak
-  // pointers ensure this and will automatically release the memory after all
-  // instances are released.
-  inline static std::map<void*, std::weak_ptr<FunctionTable>>
-    shared_callback_slots;
-  std::shared_ptr<FunctionTable> callback_slots = nullptr;
-  // However, if the library is also loaded externally in the application, then
-  // we don't know when we can ever "reset". In such scenarios, we are better of
-  // never throwing away the callback info, rather than figuring out
-  // what/why/when the application is loading or unloading the sandboxed
-  // library. An extra reference to the shared_ptr will ensure this.
-  inline static std::vector<std::shared_ptr<FunctionTable>>
-    saved_callback_slot_info;
-
 #ifndef RLBOX_EMBEDDER_PROVIDES_TLS_STATIC_VARIABLES
   thread_local static inline rlbox_wasmtime_sandbox_thread_data thread_data{ 0,
                                                                           0 };
@@ -406,90 +380,48 @@ private:
     }
   }
 
-  inline std::shared_ptr<FunctionTable> get_callback_ref_data(
-    WasmtimeFunctionTable& functionPointerTable)
+  template<typename T_FormalRet>
+  inline auto serialize_wasmtimeval_to_sandbox(WasmtimeValue arg)
   {
-    auto callback_slots = std::make_shared<FunctionTable>();
-
-    for (size_t i = 0; i < MAX_CALLBACKS; i++) {
-      uintptr_t reservedVal =
-        wasmtime_get_reserved_callback_slot_val(sandbox, i + 1);
-
-      bool found = false;
-      for (size_t j = 0; j < functionPointerTable.length; j++) {
-        if (functionPointerTable.data[j].rf == reservedVal) {
-          functionPointerTable.data[j].rf = 0;
-          callback_slots->elements[i] = &(functionPointerTable.data[j]);
-          callback_slots->slot_number[i] = static_cast<uint32_t>(j);
-          found = true;
-          break;
-        }
-      }
-
-      detail::dynamic_check(found, "Unable to intialize callback tables");
-    }
-
-    return callback_slots;
-  }
-
-  inline void reinit_callback_ref_data(
-    WasmtimeFunctionTable& functionPointerTable,
-    std::shared_ptr<FunctionTable>& callback_slots)
-  {
-    for (size_t i = 0; i < MAX_CALLBACKS; i++) {
-      uintptr_t reservedVal =
-        wasmtime_get_reserved_callback_slot_val(sandbox, i + 1);
-
-      for (size_t j = 0; j < functionPointerTable.length; j++) {
-        if (functionPointerTable.data[j].rf == reservedVal) {
-          functionPointerTable.data[j].rf = 0;
-
-          detail::dynamic_check(
-            callback_slots->elements[i] == &(functionPointerTable.data[j]) &&
-              callback_slots->slot_number[i] == static_cast<uint32_t>(j),
-            "Sandbox creation error: Error when checking the values of "
-            "callback slot data");
-
-          break;
-        }
-      }
-    }
-  }
-
-  inline void set_callbacks_slots_ref(bool external_loads_exist)
-  {
-    WasmtimeFunctionTable functionPointerTable =
-      wasmtime_get_function_pointer_table(sandbox);
-    void* key = functionPointerTable.data;
-
-    std::lock_guard<std::mutex> lock(callback_table_mutex);
-    std::weak_ptr<FunctionTable> slots = shared_callback_slots[key];
-
-    if (auto shared_slots = slots.lock()) {
-      // pointer exists
-      callback_slots = shared_slots;
-      // Sometimes, dlopen and process forking seem to act a little weird.
-      // Writes to the writable page of the dynamic lib section seem to not
-      // always be propagated (possibly when the dynamic library is opened
-      // externally - "external_loads_exist")). This occurred in when RLBox was
-      // used in ASAN builds of Firefox. In general, we take the precaution of
-      // rechecking this on each sandbox creation.
-      reinit_callback_ref_data(functionPointerTable, callback_slots);
-      return;
-    }
-
-    callback_slots = get_callback_ref_data(functionPointerTable);
-    shared_callback_slots[key] = callback_slots;
-    if (external_loads_exist) {
-      saved_callback_slot_info.push_back(callback_slots);
+    if constexpr (std::is_class_v<T_FormalRet>) {
+      // structs returned as pointers into wasm memory/wasm stack
+      #ifdef RLBOX_ENABLE_DEBUG_ASSERTIONS
+        detail::dynamic_check(arg.val_type == WasmtimeValueType_I32, "Expected pointer type for serializing struct");
+      #endif
+      auto ptr = reinterpret_cast<T_FormalRet*>(
+        impl_get_unsandboxed_pointer<T_FormalRet*>(arg.u32));
+      T_FormalRet ret = *ptr;
+      return ret;
+    } else if constexpr (std::is_same_v<std::remove_cv_t<T_FormalRet>, double>) {
+      #ifdef RLBOX_ENABLE_DEBUG_ASSERTIONS
+        detail::dynamic_check(arg.val_type == WasmtimeValueType_F64, "Expected double");
+      #endif
+      return arg.f64;
+    } else if constexpr (std::is_same_v<std::remove_cv_t<T_FormalRet>, float>) {
+      #ifdef RLBOX_ENABLE_DEBUG_ASSERTIONS
+        detail::dynamic_check(arg.val_type == WasmtimeValueType_F32, "Expected float");
+      #endif
+      return arg.f32;
+    } else if constexpr (sizeof(T_FormalRet) <= 32) {
+      #ifdef RLBOX_ENABLE_DEBUG_ASSERTIONS
+        detail::dynamic_check(arg.val_type == WasmtimeValueType_I32, "Expected int32");
+      #endif
+      return arg.u32;
+    } else if constexpr (sizeof(T_FormalRet) <= 64) {
+      #ifdef RLBOX_ENABLE_DEBUG_ASSERTIONS
+        detail::dynamic_check(arg.val_type == WasmtimeValueType_I32, "Expected int64");
+      #endif
+      return arg.u64;
+    } else {
+      static_assert(wasmtime_detail::false_v<T_FormalRet>,
+                      "Unknown case");
     }
   }
 
   template<uint32_t N, typename T_Ret, typename... T_Args>
-  static typename wasmtime_detail::convert_type_to_wasm_type<T_Ret>::type
-  callback_interceptor(
-    void* /* vmContext */,
-    typename wasmtime_detail::convert_type_to_wasm_type<T_Args>::type... params)
+  static WasmtimeValue callback_interceptor(
+    uint32_t params_len,
+    WasmtimeValue* args)
   {
 #ifdef RLBOX_EMBEDDER_PROVIDES_TLS_STATIC_VARIABLES
     auto& thread_data = *get_rlbox_wasmtime_sandbox_thread_data();
@@ -504,7 +436,18 @@ private:
     // Callbacks are invoked through function pointers, cannot use std::forward
     // as we don't have caller context for T_Args, which means they are all
     // effectively passed by value
-    return func(thread_data.sandbox->serialize_to_sandbox<T_Args>(params)...);
+    std::tuple<T_Args...> transformed_args{thread_data.sandbox->serialize_wasmtimeval_to_sandbox<T_Args>(*(args++))...};
+
+    if constexpr(std::is_void_v<T_Ret>) {
+      std::apply(func, std::move(transformed_args));
+      WasmtimeValue ret;
+      ret.val_type = WasmtimeValueType_Void;
+      return ret;
+    } else {
+      auto ret_val = std::apply(func, std::move(transformed_args));
+      WasmtimeValue ret = thread_data.sandbox->serialize_arg<T_Ret>(nullptr, ret_val);
+      return ret;
+    }
   }
 
   template<uint32_t N, typename T_Ret, typename... T_Args>
@@ -513,30 +456,31 @@ private:
     typename wasmtime_detail::convert_type_to_wasm_type<T_Ret>::type ret,
     typename wasmtime_detail::convert_type_to_wasm_type<T_Args>::type... params)
   {
-#ifdef RLBOX_EMBEDDER_PROVIDES_TLS_STATIC_VARIABLES
-    auto& thread_data = *get_rlbox_wasmtime_sandbox_thread_data();
-#endif
-    thread_data.last_callback_invoked = N;
-    using T_Func = T_Ret (*)(T_Args...);
-    T_Func func;
-    {
-      RLBOX_ACQUIRE_SHARED_GUARD(lock, thread_data.sandbox->callback_mutex);
-      func = reinterpret_cast<T_Func>(thread_data.sandbox->callbacks[N]);
-    }
-    // Callbacks are invoked through function pointers, cannot use std::forward
-    // as we don't have caller context for T_Args, which means they are all
-    // effectively passed by value
-    auto ret_val =
-      func(thread_data.sandbox->serialize_to_sandbox<T_Args>(params)...);
-    // Copy the return value back
-    auto ret_ptr = reinterpret_cast<T_Ret*>(
-      thread_data.sandbox->template impl_get_unsandboxed_pointer<T_Ret*>(ret));
-    *ret_ptr = ret_val;
+// #ifdef RLBOX_EMBEDDER_PROVIDES_TLS_STATIC_VARIABLES
+//     auto& thread_data = *get_rlbox_wasmtime_sandbox_thread_data();
+// #endif
+//     thread_data.last_callback_invoked = N;
+//     using T_Func = T_Ret (*)(T_Args...);
+//     T_Func func;
+//     {
+//       RLBOX_ACQUIRE_SHARED_GUARD(lock, thread_data.sandbox->callback_mutex);
+//       func = reinterpret_cast<T_Func>(thread_data.sandbox->callbacks[N]);
+//     }
+//     // Callbacks are invoked through function pointers, cannot use std::forward
+//     // as we don't have caller context for T_Args, which means they are all
+//     // effectively passed by value
+//     auto ret_val =
+//       func(thread_data.sandbox->serialize_to_sandbox<T_Args>(params)...);
+//     // Copy the return value back
+//     auto ret_ptr = reinterpret_cast<T_Ret*>(
+//       thread_data.sandbox->template impl_get_unsandboxed_pointer<T_Ret*>(ret));
+//     *ret_ptr = ret_val;
+      static_assert(wasmtime_detail::false_v<T_Ret>, "Not implemented");
   }
 
   template<typename T_Ret, typename... T_Args>
-  inline T_PointerType get_wasmtime_type_index(
-    T_Ret (*/* dummy for template inference */)(T_Args...) = nullptr) const
+  inline WasmtimeFunctionSignature get_wasmtime_signature(
+    T_Ret (* /* dummy for template inference */)(T_Args...) = nullptr) const
   {
     // Class return types as promoted to args
     constexpr bool promoted = std::is_class_v<T_Ret>;
@@ -552,7 +496,7 @@ private:
                                         sizeof(param_types) /
                                           sizeof(WasmtimeValueType),
                                         &(param_types[0]) };
-      type_index = wasmtime_get_function_type_index(sandbox, signature);
+      return signature;
     } else {
       WasmtimeValueType ret_type =
         wasmtime_detail::convert_type_to_wasm_type<T_Ret>::wasmtime_type;
@@ -563,10 +507,8 @@ private:
                                         sizeof(param_types) /
                                           sizeof(WasmtimeValueType),
                                         &(param_types[0]) };
-      type_index = wasmtime_get_function_type_index(sandbox, signature);
+      return signature;
     }
-
-    return type_index;
   }
 
   void ensure_return_slot_size(size_t size)
@@ -611,8 +553,6 @@ protected:
     // cache these for performance
     malloc_index = impl_lookup_symbol("malloc");
     free_index = impl_lookup_symbol("free");
-
-    // set_callbacks_slots_ref(external_loads_exist);
   }
 
   inline void impl_create_sandbox(const char* wasmtime_module_path)
@@ -635,14 +575,16 @@ protected:
   inline void* impl_get_unsandboxed_pointer(T_PointerType p) const
   {
     if constexpr (std::is_function_v<std::remove_pointer_t<T>>) {
-      WasmtimeFunctionTable functionPointerTable =
-        wasmtime_get_function_pointer_table(sandbox);
-      if (p >= functionPointerTable.length) {
-        // Received out of range function pointer
-        return nullptr;
-      }
-      auto ret = functionPointerTable.data[p].rf;
-      return reinterpret_cast<void*>(static_cast<uintptr_t>(ret));
+      detail::dynamic_check(false, "Not implemented");
+      return nullptr;
+      // WasmtimeFunctionTable functionPointerTable =
+      //   wasmtime_get_function_pointer_table(sandbox);
+      // if (p >= functionPointerTable.length) {
+      //   // Received out of range function pointer
+      //   return nullptr;
+      // }
+      // auto ret = functionPointerTable.data[p].rf;
+      // return reinterpret_cast<void*>(static_cast<uintptr_t>(ret));
     } else {
       return reinterpret_cast<void*>(heap_base + p);
     }
@@ -661,34 +603,36 @@ protected:
       // indirect function, we need to register this like a normal callback.
       // However, unlike callbacks, we will not require the user to unregister
       // this. Instead, this permenantly takes up a callback slot.
-      WasmtimeFunctionTable functionPointerTable =
-        wasmtime_get_function_pointer_table(sandbox);
-      std::lock_guard<std::mutex> lock(callback_table_mutex);
+      // WasmtimeFunctionTable functionPointerTable =
+      //   wasmtime_get_function_pointer_table(sandbox);
+      // std::lock_guard<std::mutex> lock(callback_table_mutex);
 
-      // Scenario 1 described above
-      ssize_t empty_slot = -1;
-      for (size_t i = 0; i < functionPointerTable.length; i++) {
-        if (functionPointerTable.data[i].rf == reinterpret_cast<uintptr_t>(p)) {
-          return static_cast<T_PointerType>(i);
-        } else if (functionPointerTable.data[i].rf == 0 && empty_slot == -1) {
-          // found an empty slot. Save it, as we may use it later.
-          empty_slot = i;
-        }
-      }
+      // // Scenario 1 described above
+      // ssize_t empty_slot = -1;
+      // for (size_t i = 0; i < functionPointerTable.length; i++) {
+      //   if (functionPointerTable.data[i].rf == reinterpret_cast<uintptr_t>(p)) {
+      //     return static_cast<T_PointerType>(i);
+      //   } else if (functionPointerTable.data[i].rf == 0 && empty_slot == -1) {
+      //     // found an empty slot. Save it, as we may use it later.
+      //     empty_slot = i;
+      //   }
+      // }
 
-      // Scenario 2 described above
-      detail::dynamic_check(
-        empty_slot != -1,
-        "Could not find an empty slot in sandbox function table. This would "
-        "happen if you have registered too many callbacks, or unsandboxed "
-        "too many function pointers. You can file a bug if you want to "
-        "increase the maximum allowed callbacks or unsadnboxed functions "
-        "pointers");
-      T dummy = nullptr;
-      int32_t type_index = get_wasmtime_type_index(dummy);
-      functionPointerTable.data[empty_slot].ty = type_index;
-      functionPointerTable.data[empty_slot].rf = reinterpret_cast<uintptr_t>(p);
-      return empty_slot;
+      // // Scenario 2 described above
+      // detail::dynamic_check(
+      //   empty_slot != -1,
+      //   "Could not find an empty slot in sandbox function table. This would "
+      //   "happen if you have registered too many callbacks, or unsandboxed "
+      //   "too many function pointers. You can file a bug if you want to "
+      //   "increase the maximum allowed callbacks or unsadnboxed functions "
+      //   "pointers");
+      // T dummy = nullptr;
+      // int32_t type_index = get_wasmtime_type_index(dummy);
+      // functionPointerTable.data[empty_slot].ty = type_index;
+      // functionPointerTable.data[empty_slot].rf = reinterpret_cast<uintptr_t>(p);
+      // return empty_slot;
+      detail::dynamic_check(false, "Not implemented");
+      return 0;
 
     } else {
       detail::dynamic_check(impl_is_pointer_in_sandbox_memory(p), "Trying to swizzle a pointer that is not in the sandbox");
@@ -846,33 +790,23 @@ protected:
   }
 
   template<typename T_Ret, typename... T_Args>
-  inline T_PointerType impl_register_callback(void* key, void* callback)
+  T_PointerType impl_register_callback(void* key, void* callback)
   {
-    int32_t type_index = get_wasmtime_type_index<T_Ret, T_Args...>();
-
-    detail::dynamic_check(
-      type_index != -1,
-      "Could not find wasmtime type for callback signature. This can "
-      "happen if you tried to register a callback whose signature "
-      "does not correspond to any callbacks used in the library.");
-
     bool found = false;
     uint32_t found_loc = 0;
-    uint32_t slot_number = 0;
+    void* chosen_interceptor = nullptr;
 
     {
-      std::lock_guard<std::mutex> lock(callback_table_mutex);
+      RLBOX_ACQUIRE_UNIQUE_GUARD(lock, callback_mutex);
 
       // need a compile time for loop as we we need I to be a compile time value
       // this is because we are setting the I'th callback ineterceptor
       wasmtime_detail::compile_time_for<MAX_CALLBACKS>([&](auto I) {
         constexpr auto i = I.value;
-        if (!found && callback_slots->elements[i]->rf == 0) {
+        if (!found && callbacks[i] == nullptr) {
           found = true;
           found_loc = i;
-          slot_number = callback_slots->slot_number[i];
 
-          void* chosen_interceptor;
           if constexpr (std::is_class_v<T_Ret>) {
             chosen_interceptor = reinterpret_cast<void*>(
               callback_interceptor_promoted<i, T_Ret, T_Args...>);
@@ -880,9 +814,6 @@ protected:
             chosen_interceptor = reinterpret_cast<void*>(
               callback_interceptor<i, T_Ret, T_Args...>);
           }
-          callback_slots->elements[i]->ty = type_index;
-          callback_slots->elements[i]->rf =
-            reinterpret_cast<uintptr_t>(chosen_interceptor);
         }
       });
     }
@@ -894,6 +825,9 @@ protected:
       "too many function pointers. You can file a bug if you want to "
       "increase the maximum allowed callbacks or unsadnboxed functions "
       "pointers");
+
+    WasmtimeFunctionSignature sig = get_wasmtime_signature<T_Ret, T_Args...>();
+    uint32_t slot_number = wasmtime_register_callback(sandbox, sig, chosen_interceptor);
 
     {
       RLBOX_ACQUIRE_UNIQUE_GUARD(lock, callback_mutex);
@@ -926,6 +860,7 @@ protected:
       RLBOX_ACQUIRE_UNIQUE_GUARD(lock, callback_mutex);
       for (; i < MAX_CALLBACKS; i++) {
         if (callback_unique_keys[i] == key) {
+          wasmtime_unregister_callback(sandbox, callback_slot_assignment[i]);
           callback_unique_keys[i] = nullptr;
           callbacks[i] = nullptr;
           callback_slot_assignment[i] = 0;
@@ -938,8 +873,6 @@ protected:
     detail::dynamic_check(
       found, "Internal error: Could not find callback to unregister");
 
-    std::lock_guard<std::mutex> shared_lock(callback_table_mutex);
-    callback_slots->elements[i]->rf = 0;
     return;
   }
 };

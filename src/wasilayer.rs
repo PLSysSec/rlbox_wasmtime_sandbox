@@ -1,4 +1,4 @@
-use wasmtime::*;
+// use wasmtime::*;
 use wasi_common::*;
 use wasi_common::snapshots::preview_1::wasi_snapshot_preview1::WasiSnapshotPreview1 as Snapshot1;
 
@@ -29,31 +29,31 @@ pub extern "C" fn _wasm_function___wasi_args_get<'b>(
 // }
 
 #[no_mangle]
-pub extern "C" fn _wasm_function___wasi_args_sizes_get(ctx: &WasiCtx) {
+pub extern "C" fn _wasm_function___wasi_args_sizes_get(_ctx: &WasiCtx) {
     panic!("Not implemented")
 }
 
 #[no_mangle]
-pub extern "C" fn _wasm_function___wasi_proc_exit(ctx: &WasiCtx) {
+pub extern "C" fn _wasm_function___wasi_proc_exit(_ctx: &WasiCtx) {
     panic!("Not implemented")
 }
 
 #[no_mangle]
-pub extern "C" fn _wasm_function___wasi_fd_close(ctx: &WasiCtx) {
+pub extern "C" fn _wasm_function___wasi_fd_close(_ctx: &WasiCtx) {
     panic!("Not implemented")
 }
 
 #[no_mangle]
-pub extern "C" fn _wasm_function___wasi_fd_fdstat_get(ctx: &WasiCtx) {
+pub extern "C" fn _wasm_function___wasi_fd_fdstat_get(_ctx: &WasiCtx) {
     panic!("Not implemented")
 }
 
 #[no_mangle]
-pub extern "C" fn _wasm_function___wasi_fd_seek(ctx: &WasiCtx) {
+pub extern "C" fn _wasm_function___wasi_fd_seek(_ctx: &WasiCtx) {
     panic!("Not implemented")
 }
 
 #[no_mangle]
-pub extern "C" fn _wasm_function___wasi_fd_write(ctx: &WasiCtx) {
+pub extern "C" fn _wasm_function___wasi_fd_write(_ctx: &WasiCtx) {
     panic!("Not implemented")
 }

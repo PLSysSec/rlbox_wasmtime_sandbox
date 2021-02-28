@@ -35,16 +35,6 @@ typedef struct {
   WasmtimeValueType *parameters;
 } WasmtimeFunctionSignature;
 
-typedef struct {
-  uint64_t ty;
-  uint64_t rf;
-} WasmtimeFunctionTableElement;
-
-typedef struct {
-  WasmtimeFunctionTableElement *data;
-  size_t length;
-} WasmtimeFunctionTable;
-
 void wasmtime_ensure_linked();
 WasmtimeSandboxInstance *wasmtime_load_module(const char *wasmtime_module_path,
                                         bool allow_stdio);
@@ -72,10 +62,8 @@ double wasmtime_run_function_return_f64(WasmtimeSandboxInstance *inst,
                                      void* func_ptr, int argc,
                                      WasmtimeValue *argv);
 
-uintptr_t wasmtime_get_reserved_callback_slot_val(void *inst,
-                                               uint32_t slot_number);
-WasmtimeFunctionTable wasmtime_get_function_pointer_table(void *inst);
-int32_t wasmtime_get_function_type_index(void *inst, WasmtimeFunctionSignature csig);
+uint32_t wasmtime_register_callback(void* inst_ptr, WasmtimeFunctionSignature csig, void* func_ptr);
+void wasmtime_unregister_callback(void* inst_ptr, uint32_t slot);
 
 void *wasmtime_get_heap_base(WasmtimeSandboxInstance *inst);
 size_t wasmtime_get_heap_size(WasmtimeSandboxInstance *inst);

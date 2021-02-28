@@ -37,7 +37,7 @@ set(CMAKE_C_FLAGS
     "--sysroot ${wasiclang_SOURCE_DIR}/share/wasi-sysroot/")
 # Link flags are set by default on Mac - clearing this
 set(CMAKE_C_LINK_FLAGS "")
-set(CMAKE_EXE_LINKER_FLAGS "-Wl,--export-all")
+set(CMAKE_EXE_LINKER_FLAGS "-Wl,--export-all,--export-table,--growable-table")
 
 add_executable(glue_lib_wasmtime.wasm
                wasmtime_sandbox_wrapper.c

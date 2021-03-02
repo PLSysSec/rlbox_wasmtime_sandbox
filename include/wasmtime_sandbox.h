@@ -40,12 +40,6 @@ WasmtimeSandboxInstance *wasmtime_load_module(const char *wasmtime_module_path,
                                         bool allow_stdio);
 void wasmtime_drop_module(WasmtimeSandboxInstance *inst);
 
-void* wasmtime_lookup_function(WasmtimeSandboxInstance *inst,
-                            const char *fn_name);
-void wasmtime_set_curr_instance(WasmtimeSandboxInstance *inst);
-void wasmtime_clear_curr_instance(WasmtimeSandboxInstance *inst);
-
-
 void wasmtime_run_function_return_void(WasmtimeSandboxInstance *inst,
                                     void* func_ptr, int argc,
                                     WasmtimeValue *argv);
@@ -62,7 +56,8 @@ double wasmtime_run_function_return_f64(WasmtimeSandboxInstance *inst,
                                      void* func_ptr, int argc,
                                      WasmtimeValue *argv);
 
-uint32_t wasmtime_register_callback(void* inst_ptr, WasmtimeFunctionSignature csig, void* func_ptr);
+uint32_t wasmtime_register_callback(void* inst_ptr, WasmtimeFunctionSignature csig, const void* func_ptr);
+uint32_t wasmtime_register_internal_callback(void* inst_ptr, WasmtimeFunctionSignature csig, const void* func_ptr);
 void wasmtime_unregister_callback(void* inst_ptr, uint32_t slot);
 
 void *wasmtime_get_heap_base(WasmtimeSandboxInstance *inst);

@@ -7,30 +7,6 @@ use std::ffi::{c_void, CStr};
 use std::os::raw::{c_char, c_int};
 
 #[no_mangle]
-pub extern "C" fn wasmtime_lookup_function(
-    _inst_ptr: *mut c_void,
-    _fn_name: *const c_char,
-) -> *mut c_void {
-    panic!("Not implemented");
-    // let inst = unsafe { &mut *(inst_ptr as *mut WasmtimeSandboxInstance) };
-    // let name = unsafe { CStr::from_ptr(fn_name).to_string_lossy() };
-    // let func = inst
-    //     .instance_handle
-    //     .module()
-    //     .get_export_func(&name)
-    //     .unwrap();
-    // let ret = func.ptr.as_usize();
-    // return ret as *mut c_void;
-}
-
-#[no_mangle]
-pub extern "C" fn wasmtime_set_curr_instance(_inst_ptr: *mut c_void)
-{
-    // let inst = unsafe { &mut *(inst_ptr as *mut WasmtimeSandboxInstance) };
-    // inst.instance_handle.set_current_instance();
-}
-
-#[no_mangle]
 pub extern "C" fn wasmtime_run_function_return_void(
     inst_ptr: *mut c_void,
     func_ptr: *mut c_void,

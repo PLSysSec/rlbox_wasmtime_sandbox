@@ -34,6 +34,7 @@ pub extern "C" fn wasmtime_load_module(wasmtime_module_path: *const c_char, _all
         linker,
         wasi,
         module,
+        free_callback_slots: vec![]
     };
     let r = Box::into_raw(Box::new(inst)) as *mut c_void;
     return r;

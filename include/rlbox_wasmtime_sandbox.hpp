@@ -246,10 +246,11 @@ private:
   T_PointerType return_slot = 0;
 
   static const size_t MAX_CALLBACKS = 128;
-  RLBOX_SHARED_LOCK(callback_mutex);
+  mutable RLBOX_SHARED_LOCK(callback_mutex);
   void* callback_unique_keys[MAX_CALLBACKS]{ 0 };
   void* callbacks[MAX_CALLBACKS]{ 0 };
   uint32_t callback_slot_assignment[MAX_CALLBACKS]{ 0 };
+  mutable std::map<const void*, uint32_t> internal_callbacks;
 
 #ifndef RLBOX_EMBEDDER_PROVIDES_TLS_STATIC_VARIABLES
   thread_local static inline rlbox_wasmtime_sandbox_thread_data thread_data{ 0,
@@ -409,7 +410,7 @@ private:
       return arg.u32;
     } else if constexpr (sizeof(T_FormalRet) <= 64) {
       #ifdef RLBOX_ENABLE_DEBUG_ASSERTIONS
-        detail::dynamic_check(arg.val_type == WasmtimeValueType_I32, "Expected int64");
+        detail::dynamic_check(arg.val_type == WasmtimeValueType_I64, "Expected int64");
       #endif
       return arg.u64;
     } else {
@@ -453,29 +454,32 @@ private:
   template<uint32_t N, typename T_Ret, typename... T_Args>
   static void callback_interceptor_promoted(
     void* /* vmContext */,
-    typename wasmtime_detail::convert_type_to_wasm_type<T_Ret>::type ret,
-    typename wasmtime_detail::convert_type_to_wasm_type<T_Args>::type... params)
+    uint32_t params_len,
+    WasmtimeValue* args)
   {
-// #ifdef RLBOX_EMBEDDER_PROVIDES_TLS_STATIC_VARIABLES
-//     auto& thread_data = *get_rlbox_wasmtime_sandbox_thread_data();
-// #endif
-//     thread_data.last_callback_invoked = N;
-//     using T_Func = T_Ret (*)(T_Args...);
-//     T_Func func;
-//     {
-//       RLBOX_ACQUIRE_SHARED_GUARD(lock, thread_data.sandbox->callback_mutex);
-//       func = reinterpret_cast<T_Func>(thread_data.sandbox->callbacks[N]);
-//     }
-//     // Callbacks are invoked through function pointers, cannot use std::forward
-//     // as we don't have caller context for T_Args, which means they are all
-//     // effectively passed by value
-//     auto ret_val =
-//       func(thread_data.sandbox->serialize_to_sandbox<T_Args>(params)...);
-//     // Copy the return value back
-//     auto ret_ptr = reinterpret_cast<T_Ret*>(
-//       thread_data.sandbox->template impl_get_unsandboxed_pointer<T_Ret*>(ret));
-//     *ret_ptr = ret_val;
-      static_assert(wasmtime_detail::false_v<T_Ret>, "Not implemented");
+#ifdef RLBOX_EMBEDDER_PROVIDES_TLS_STATIC_VARIABLES
+    auto& thread_data = *get_rlbox_wasmtime_sandbox_thread_data();
+#endif
+    thread_data.last_callback_invoked = N;
+    using T_Func = T_Ret (*)(T_Args...);
+    T_Func func;
+    {
+      RLBOX_ACQUIRE_SHARED_GUARD(lock, thread_data.sandbox->callback_mutex);
+      func = reinterpret_cast<T_Func>(thread_data.sandbox->callbacks[N]);
+    }
+    // Callbacks are invoked through function pointers, cannot use std::forward
+    // as we don't have caller context for T_Args, which means they are all
+    // effectively passed by value
+    auto args_next = ++args;
+    std::tuple<T_Args...> transformed_args{thread_data.sandbox->serialize_wasmtimeval_to_sandbox<T_Args>(*(args_next++))...};
+    auto ret_val = std::apply(func, std::move(transformed_args));
+    // Copy the return value back
+    #ifdef RLBOX_ENABLE_DEBUG_ASSERTIONS
+      detail::dynamic_check(args[0].val_type == WasmtimeValueType_I32, "Expected pointer return slot as first parameter");
+    #endif
+    auto ret_ptr = reinterpret_cast<T_Ret*>(
+      thread_data.sandbox->template impl_get_unsandboxed_pointer<T_Ret*>(args[0].u32));
+    *ret_ptr = ret_val;
   }
 
   template<typename T_Ret, typename... T_Args>
@@ -594,46 +598,18 @@ protected:
   inline T_PointerType impl_get_sandboxed_pointer(const void* p) const
   {
     if constexpr (std::is_function_v<std::remove_pointer_t<T>>) {
-      // p is a pointer to a function internal to the wasmtime module
-      // we need to either
-      // 1) find the indirect function slot this is registered and return the
-      // slot number. For this we need to scan the full indirect function table,
-      // not just the portion we have reserved for callbacks.
-      // 2) in the scenario this function has not ever been listed as an
-      // indirect function, we need to register this like a normal callback.
-      // However, unlike callbacks, we will not require the user to unregister
-      // this. Instead, this permenantly takes up a callback slot.
-      // WasmtimeFunctionTable functionPointerTable =
-      //   wasmtime_get_function_pointer_table(sandbox);
-      // std::lock_guard<std::mutex> lock(callback_table_mutex);
+      RLBOX_ACQUIRE_UNIQUE_GUARD(lock, callback_mutex);
 
-      // // Scenario 1 described above
-      // ssize_t empty_slot = -1;
-      // for (size_t i = 0; i < functionPointerTable.length; i++) {
-      //   if (functionPointerTable.data[i].rf == reinterpret_cast<uintptr_t>(p)) {
-      //     return static_cast<T_PointerType>(i);
-      //   } else if (functionPointerTable.data[i].rf == 0 && empty_slot == -1) {
-      //     // found an empty slot. Save it, as we may use it later.
-      //     empty_slot = i;
-      //   }
-      // }
-
-      // // Scenario 2 described above
-      // detail::dynamic_check(
-      //   empty_slot != -1,
-      //   "Could not find an empty slot in sandbox function table. This would "
-      //   "happen if you have registered too many callbacks, or unsandboxed "
-      //   "too many function pointers. You can file a bug if you want to "
-      //   "increase the maximum allowed callbacks or unsadnboxed functions "
-      //   "pointers");
-      // T dummy = nullptr;
-      // int32_t type_index = get_wasmtime_type_index(dummy);
-      // functionPointerTable.data[empty_slot].ty = type_index;
-      // functionPointerTable.data[empty_slot].rf = reinterpret_cast<uintptr_t>(p);
-      // return empty_slot;
-      detail::dynamic_check(false, "Not implemented");
-      return 0;
-
+      uint32_t slot_number = 0;
+      auto found = internal_callbacks.find(p);
+      if (found != internal_callbacks.end()) {
+        slot_number = found->second;
+      } else {
+        WasmtimeFunctionSignature sig = get_wasmtime_signature(static_cast<T>(nullptr));
+        slot_number = wasmtime_register_internal_callback(sandbox, sig, p);
+        internal_callbacks[p] = slot_number;
+      }
+      return static_cast<T_PointerType>(slot_number);
     } else {
       detail::dynamic_check(impl_is_pointer_in_sandbox_memory(p), "Trying to swizzle a pointer that is not in the sandbox");
       return static_cast<T_PointerType>(reinterpret_cast<uintptr_t>(p) - heap_base);
@@ -691,10 +667,6 @@ protected:
   void* impl_lookup_symbol(const char* func_name)
   {
     return (void*) func_name;
-    // return wasmtime_lookup_function(func_name);
-    // std::string symbol = "_wasm_function_";
-    // symbol += func_name;
-    // return dlsym(nullptr, symbol.c_str());
   }
 
 
@@ -796,27 +768,25 @@ protected:
     uint32_t found_loc = 0;
     void* chosen_interceptor = nullptr;
 
-    {
-      RLBOX_ACQUIRE_UNIQUE_GUARD(lock, callback_mutex);
+    RLBOX_ACQUIRE_UNIQUE_GUARD(lock, callback_mutex);
 
-      // need a compile time for loop as we we need I to be a compile time value
-      // this is because we are setting the I'th callback ineterceptor
-      wasmtime_detail::compile_time_for<MAX_CALLBACKS>([&](auto I) {
-        constexpr auto i = I.value;
-        if (!found && callbacks[i] == nullptr) {
-          found = true;
-          found_loc = i;
+    // need a compile time for loop as we we need I to be a compile time value
+    // this is because we are setting the I'th callback ineterceptor
+    wasmtime_detail::compile_time_for<MAX_CALLBACKS>([&](auto I) {
+      constexpr auto i = I.value;
+      if (!found && callbacks[i] == nullptr) {
+        found = true;
+        found_loc = i;
 
-          if constexpr (std::is_class_v<T_Ret>) {
-            chosen_interceptor = reinterpret_cast<void*>(
-              callback_interceptor_promoted<i, T_Ret, T_Args...>);
-          } else {
-            chosen_interceptor = reinterpret_cast<void*>(
-              callback_interceptor<i, T_Ret, T_Args...>);
-          }
+        if constexpr (std::is_class_v<T_Ret>) {
+          chosen_interceptor = reinterpret_cast<void*>(
+            callback_interceptor_promoted<i, T_Ret, T_Args...>);
+        } else {
+          chosen_interceptor = reinterpret_cast<void*>(
+            callback_interceptor<i, T_Ret, T_Args...>);
         }
-      });
-    }
+      }
+    });
 
     detail::dynamic_check(
       found,
@@ -829,12 +799,9 @@ protected:
     WasmtimeFunctionSignature sig = get_wasmtime_signature<T_Ret, T_Args...>();
     uint32_t slot_number = wasmtime_register_callback(sandbox, sig, chosen_interceptor);
 
-    {
-      RLBOX_ACQUIRE_UNIQUE_GUARD(lock, callback_mutex);
-      callback_unique_keys[found_loc] = key;
-      callbacks[found_loc] = callback;
-      callback_slot_assignment[found_loc] = slot_number;
-    }
+    callback_unique_keys[found_loc] = key;
+    callbacks[found_loc] = callback;
+    callback_slot_assignment[found_loc] = slot_number;
 
     return static_cast<T_PointerType>(slot_number);
   }

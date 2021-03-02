@@ -1,6 +1,3 @@
-// use wasmtime_module::{Signature, ValueType};
-// use wasmtime_runtime::{InstanceHandle, MmapRegion};
-// use wasmtime_runtime_internals::val::Val;
 use wasmtime::*;
 use wasmtime_wasi::Wasi;
 
@@ -13,43 +10,8 @@ pub struct WasmtimeSandboxInstance {
     pub linker: Linker,
     pub wasi: Wasi,
     pub module: Module,
-
-    // pub region: Arc<MmapRegion>,
-    // pub instance_handle: InstanceHandle,
-    // pub signatures: Vec<Signature>,
+    pub free_callback_slots: Vec<u32>,
 }
-
-#[derive(Debug)]
-pub enum Error {
-    // GoblinError(goblin::error::Error),
-    // WasiError(failure::Error),
-    // WasmtimeRuntimeError(wasmtime_runtime_internals::error::Error),
-    // WasmtimeModuleError(wasmtime_module::Error),
-}
-
-// impl From<goblin::error::Error> for Error {
-//     fn from(e: goblin::error::Error) -> Self {
-//         Error::GoblinError(e)
-//     }
-// }
-
-// impl From<failure::Error> for Error {
-//     fn from(e: failure::Error) -> Self {
-//         Error::WasiError(e)
-//     }
-// }
-
-// impl From<wasmtime_runtime_internals::error::Error> for Error {
-//     fn from(e: wasmtime_runtime_internals::error::Error) -> Self {
-//         Error::WasmtimeRuntimeError(e)
-//     }
-// }
-
-// impl From<wasmtime_module::Error> for Error {
-//     fn from(e: wasmtime_module::Error) -> Self {
-//         Error::WasmtimeModuleError(e)
-//     }
-// }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -81,18 +43,6 @@ impl From<ValType> for WasmtimeValueType {
         Some(value_type).into()
     }
 }
-
-// impl Into<Option<ValueType>> for WasmtimeValueType {
-//     fn into(self) -> Option<ValueType> {
-//         match self {
-//             WasmtimeValueType::I32 => Some(ValueType::I32),
-//             WasmtimeValueType::I64 => Some(ValueType::I64),
-//             WasmtimeValueType::F32 => Some(ValueType::F32),
-//             WasmtimeValueType::F64 => Some(ValueType::F64),
-//             _ => None,
-//         }
-//     }
-// }
 
 impl Into<ValType> for WasmtimeValueType {
     fn into(self) -> ValType {

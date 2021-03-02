@@ -2,8 +2,8 @@ use crate::types::{WasmtimeFunctionSignature, WasmtimeSandboxInstance, WasmtimeV
 
 use wasmtime::*;
 
-use std::ffi::c_void;
-use std::os::raw::{c_uint};
+use std::ffi::{c_void, CStr};
+use std::os::raw::{c_uint, c_char};
 
 #[no_mangle]
 pub extern "C" fn wasmtime_register_callback(
@@ -13,7 +13,7 @@ pub extern "C" fn wasmtime_register_callback(
 ) -> u32 {
     let inst = unsafe { &mut *(inst_ptr as *mut WasmtimeSandboxInstance) };
     let conv_sig: FuncType = csig.into();
-    let f = Func::new(&inst.store, conv_sig, move |_caller, params, results| {
+    let fw = Func::new(&inst.store, conv_sig, move |_caller, params, results| {
         let mut params: Vec<WasmtimeValue> = params
             .iter()
             .map(|p| p.clone().into())
@@ -29,17 +29,77 @@ pub extern "C" fn wasmtime_register_callback(
     });
 
     let t = inst.instance.get_table("__indirect_function_table").expect("table");
-    let fref = t.grow(1, Val::FuncRef(Some(f))).unwrap();
+    let existing_slot = inst.free_callback_slots.pop();
+    let fref = match existing_slot {
+        Some(slot) => {
+            t.set(slot, Val::FuncRef(Some(fw))).unwrap();
+            slot
+        },
+        _ => {
+            t.grow(1, Val::FuncRef(Some(fw))).unwrap()
+        }
+    };
     fref
 }
 
 #[no_mangle]
 pub extern "C" fn wasmtime_unregister_callback(
-    _inst_ptr: *mut c_void,
-    _slot: u32,
+    inst_ptr: *mut c_void,
+    slot: u32,
 ) {
-    // let inst = unsafe { &mut *(inst_ptr as *mut WasmtimeSandboxInstance) };
-    // let t = inst.instance.get_table("__indirect_function_table").expect("table");
-    println!("!!!!!!!!!!Unregister callback not implemented!!!!!!!");
-
+    let inst = unsafe { &mut *(inst_ptr as *mut WasmtimeSandboxInstance) };
+    let t = inst.instance.get_table("__indirect_function_table").expect("table");
+    t.set(slot, Val::FuncRef(None)).unwrap();
+    inst.free_callback_slots.push(slot);
 }
+
+#[no_mangle]
+pub extern "C" fn wasmtime_register_internal_callback(
+    inst_ptr: *mut c_void,
+    csig: WasmtimeFunctionSignature,
+    func_ptr: *mut c_void,
+) -> u32 {
+    let inst = unsafe { &mut *(inst_ptr as *mut WasmtimeSandboxInstance) };
+    let conv_sig: FuncType = csig.into();
+
+    let func_charp : *const c_char = func_ptr as *const c_char;
+    let func = unsafe {
+        CStr::from_ptr(func_charp)
+            .to_string_lossy()
+            .into_owned()
+    };
+    let fi = inst.instance.get_func(&func).unwrap();
+
+    let fw = Func::new(&inst.store, conv_sig, move |_caller, params, results| {
+        let ret = fi.call(params).unwrap();
+        let v = (*ret).first().map(|a| a.clone());
+        results[0] = v.unwrap();
+        Ok(())
+    });
+
+    let t = inst.instance.get_table("__indirect_function_table").expect("table");
+    let fref = t.grow(1, Val::FuncRef(Some(fw))).unwrap();
+    fref
+}
+
+// #[no_mangle]
+// pub extern "C" fn wasmtime_lookup_callback(
+//     inst_ptr: *mut c_void,
+//     slot: u32,
+// ) -> *const c_void {
+//     let inst = unsafe { &mut *(inst_ptr as *mut WasmtimeSandboxInstance) };
+//     let t = inst.instance.get_table("__indirect_function_table").expect("table");
+//     let v = t.get(slot).unwrap();
+//     let r = match v {
+//         Val::ExternRef(e /* : Option<ExternRef> */) => {
+//             let val = e.unwrap().data();
+//             panic!("Todo");
+//         }
+//         Val::FuncRef(f /*: Option<Func>*/) => {
+//             let val = e.unwrap();
+
+//         }
+//         _ => panic!("Unknown callback element data")
+//     };
+//     panic!("Todo");
+// }

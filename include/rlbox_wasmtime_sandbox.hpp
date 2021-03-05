@@ -251,6 +251,7 @@ private:
   void* callbacks[MAX_CALLBACKS]{ 0 };
   uint32_t callback_slot_assignment[MAX_CALLBACKS]{ 0 };
   mutable std::map<const void*, uint32_t> internal_callbacks;
+  mutable std::map<uint32_t, const void*> slot_assignments;
 
 #ifndef RLBOX_EMBEDDER_PROVIDES_TLS_STATIC_VARIABLES
   thread_local static inline rlbox_wasmtime_sandbox_thread_data thread_data{ 0,
@@ -579,16 +580,14 @@ protected:
   inline void* impl_get_unsandboxed_pointer(T_PointerType p) const
   {
     if constexpr (std::is_function_v<std::remove_pointer_t<T>>) {
-      detail::dynamic_check(false, "Not implemented");
-      return nullptr;
-      // WasmtimeFunctionTable functionPointerTable =
-      //   wasmtime_get_function_pointer_table(sandbox);
-      // if (p >= functionPointerTable.length) {
-      //   // Received out of range function pointer
-      //   return nullptr;
-      // }
-      // auto ret = functionPointerTable.data[p].rf;
-      // return reinterpret_cast<void*>(static_cast<uintptr_t>(ret));
+      RLBOX_ACQUIRE_UNIQUE_GUARD(lock, callback_mutex);
+      auto found = slot_assignments.find(p);
+      if (found != slot_assignments.end()) {
+        auto ret = found->second;
+        return const_cast<void*>(ret);
+      } else {
+        return nullptr;
+      }
     } else {
       return reinterpret_cast<void*>(heap_base + p);
     }
@@ -608,6 +607,7 @@ protected:
         WasmtimeFunctionSignature sig = get_wasmtime_signature(static_cast<T>(nullptr));
         slot_number = wasmtime_register_internal_callback(sandbox, sig, p);
         internal_callbacks[p] = slot_number;
+        slot_assignments[slot_number] = p;
       }
       return static_cast<T_PointerType>(slot_number);
     } else {
@@ -802,6 +802,7 @@ protected:
     callback_unique_keys[found_loc] = key;
     callbacks[found_loc] = callback;
     callback_slot_assignment[found_loc] = slot_number;
+    slot_assignments[slot_number] = callback;
 
     return static_cast<T_PointerType>(slot_number);
   }

@@ -1,6 +1,8 @@
 [![Build Status](https://travis-ci.com/PLSysSec/rlbox_wasmtime_sandbox.svg?branch=master)](https://travis-ci.com/PLSysSec/rlbox_wasmtime_sandbox)
 
 # RLBOX Wasmtime Sandbox Integration
+(This is currently under initial development. The README below may not be accurate. Please contact author if you have questions.)
+
 Integration with RLBox sandboxing API to leverage the sandboxing in WASM modules compiled with wasmtime compiler.
 
 For details about the RLBox sandboxing APIs, see [here](https://github.com/PLSysSec/rlbox_api_cpp17).
@@ -62,13 +64,7 @@ make
 - Assuming the above command produced the wasm module `libFoo`, compile this to an ELF shared library using the modified wasmtimec compiler as shown below.
 
 ```bash
-build/cargo/release/wasmtimec                                        \
-    --bindings build/_deps/mod_wasmtime-src/wasmtime-wasi/bindings.json \
-    --guard-size "4GiB"                                           \
-    --min-reserved-size "4GiB"                                    \
-    --max-reserved-size "4GiB"                                    \
-    libFoo                                                        \
-    -o libWasmFoo.so
+build/cargo/release/wasmtime wasm2obj libFoo libWasmFoo.o
 ```
 - Finally you can write sandboxed code, just as you would with any other RLBox sandbox, such as in the short example below. For more detailed examples, please refer to the tutorial in the [RLBox Repo]((https://github.com/PLSysSec/rlbox_api_cpp17)).
 

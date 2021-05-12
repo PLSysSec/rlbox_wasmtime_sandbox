@@ -483,8 +483,9 @@ private:
     *ret_ptr = ret_val;
   }
 
+  // Expected params to be size 1 + sizeof...(T_Args)
   template<typename T_Ret, typename... T_Args>
-  inline WasmtimeFunctionSignature get_wasmtime_signature(
+  inline WasmtimeFunctionSignature get_wasmtime_signature(WasmtimeValueType* param_types,
     T_Ret (* /* dummy for template inference */)(T_Args...) = nullptr) const
   {
     // Class return types as promoted to args
@@ -493,25 +494,20 @@ private:
 
     if constexpr (promoted) {
       WasmtimeValueType ret_type = WasmtimeValueType::WasmtimeValueType_Void;
-      WasmtimeValueType param_types[] = {
-        wasmtime_detail::convert_type_to_wasm_type<T_Ret>::wasmtime_type,
-        wasmtime_detail::convert_type_to_wasm_type<T_Args>::wasmtime_type...
-      };
+      uint32_t i = 0;
+      param_types[i++] = wasmtime_detail::convert_type_to_wasm_type<T_Ret>::wasmtime_type;
+      (void (param_types[i++] = wasmtime_detail::convert_type_to_wasm_type<T_Args>::wasmtime_type), ...);
       WasmtimeFunctionSignature signature{ ret_type,
-                                        sizeof(param_types) /
-                                          sizeof(WasmtimeValueType),
-                                        &(param_types[0]) };
+                                           i,
+                                           param_types };
       return signature;
     } else {
-      WasmtimeValueType ret_type =
-        wasmtime_detail::convert_type_to_wasm_type<T_Ret>::wasmtime_type;
-      WasmtimeValueType param_types[] = {
-        wasmtime_detail::convert_type_to_wasm_type<T_Args>::wasmtime_type...
-      };
+      WasmtimeValueType ret_type = wasmtime_detail::convert_type_to_wasm_type<T_Ret>::wasmtime_type;
+      uint32_t i = 0;
+      (void (param_types[i++] = wasmtime_detail::convert_type_to_wasm_type<T_Args>::wasmtime_type), ...);
       WasmtimeFunctionSignature signature{ ret_type,
-                                        sizeof(param_types) /
-                                          sizeof(WasmtimeValueType),
-                                        &(param_types[0]) };
+                                           i,
+                                           param_types };
       return signature;
     }
   }
@@ -593,6 +589,12 @@ protected:
     }
   }
 
+  template<typename T_Ret, typename... T_Args>
+  // param is dummy for template inference
+  static constexpr inline size_t get_param_count(T_Ret (*)(T_Args...)) {
+    return sizeof...(T_Args);
+  }
+
   template<typename T>
   inline T_PointerType impl_get_sandboxed_pointer(const void* p) const
   {
@@ -604,7 +606,9 @@ protected:
       if (found != internal_callbacks.end()) {
         slot_number = found->second;
       } else {
-        WasmtimeFunctionSignature sig = get_wasmtime_signature(static_cast<T>(nullptr));
+        constexpr auto param_count = get_param_count(static_cast<T>(nullptr));
+        WasmtimeValueType param_types[1 + param_count];
+        WasmtimeFunctionSignature sig = get_wasmtime_signature(param_types, static_cast<T>(nullptr));
         slot_number = wasmtime_register_internal_callback(sandbox, sig, p);
         internal_callbacks[p] = slot_number;
         slot_assignments[slot_number] = p;
@@ -796,7 +800,8 @@ protected:
       "increase the maximum allowed callbacks or unsadnboxed functions "
       "pointers");
 
-    WasmtimeFunctionSignature sig = get_wasmtime_signature<T_Ret, T_Args...>();
+    WasmtimeValueType param_types[1 + sizeof...(T_Args)];
+    WasmtimeFunctionSignature sig = get_wasmtime_signature<T_Ret, T_Args...>(param_types);
     uint32_t slot_number = wasmtime_register_callback(sandbox, sig, chosen_interceptor);
 
     callback_unique_keys[found_loc] = key;
